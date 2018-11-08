@@ -101,3 +101,8 @@ Run this, to ensure access-policy is as wanted (remember to update BASE_URL in s
     chalice deploy --no-autogen-policy
     
 It will use the policy which is described in policy-dev.json
+
+# Resources
+
+Google calendar API reference: https://developers.google.com/resources/api-libraries/documentation/calendar/v3/python/latest/
+

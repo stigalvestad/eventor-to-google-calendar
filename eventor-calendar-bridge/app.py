@@ -5,10 +5,10 @@ import logging
 import google.oauth2
 import requests
 import untangle
-# import google.oauth2.credentials
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
 import datetime
+from dateutil import tz, parser
 
 import json
 import boto3
@@ -18,15 +18,30 @@ from chalice import NotFoundError, Response
 from chalice import Chalice, Rate
 
 
+def add_to_s3(bucket, key, body):
+    app.log.debug('adding to s3 bucket: ' + bucket + ', key: ' + key)
+    S3.put_object(Bucket=bucket, Key=key, Body=body)
+
+
+def get_from_s3(bucket, key):
+    app.log.debug('reading from s3 bucket: ' + bucket + ', key: ' + key)
+    response = S3.get_object(Bucket=bucket, Key=key)
+    return response['Body'].read()
+
+
+def get_from_s3_safe(bucket, key, default):
+    try:
+        return get_from_s3(bucket, key)
+    except ClientError as e:
+        return default
+
+
 app = Chalice(app_name='eventor-calendar-bridge')
 app.debug = True
 app.log.setLevel(logging.DEBUG)
 
 S3 = boto3.client('s3', region_name='eu-west-1')
 BUCKET = 'eventor-google-calendar'
-
-# TODO this is bad, should find a better way -> use env variables
-BASE_URL = 'https://k5snffugl5.execute-api.eu-west-1.amazonaws.com' + '/api'
 
 # This OAuth 2.0 access scope allows for full read/write access to the
 # authenticated user's account and requires requests to use an SSL connection.
@@ -35,19 +50,18 @@ SCOPES = ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.goog
 API_SERVICE_NAME = 'calendar'
 API_VERSION = 'v3'
 
-# This variable specifies the name of a file that contains the OAuth 2.0
-# information for this application, including its client_id and client_secret.
-CLIENT_SECRETS_FILE = "client_secrets.json"
+CONFIG = json.loads(get_from_s3_safe(BUCKET, 'calendar-config', False))
 
-CALENDAR_ID = '4dd5j9sjb8q9sdf3hbeuig0b3g@group.calendar.google.com'
-
-
-API_KEY = '56475dea313348cea260e8e9035469f5'
 EVENTOR_BASE_URL = 'https://eventor.orientering.no/api'
 
 eventor_headers = {
-    'ApiKey': API_KEY
+    'ApiKey': (CONFIG['EventorApiKey'])
 }
+
+BASE_URL = CONFIG['HostAddress'] + '/api'
+TIME_ZONE_NAME = 'Europe/Paris'
+
+app.log.info('Managed to read configuration OK')
 
 
 def build_eventor_api_url(relative_path):
@@ -58,13 +72,18 @@ def get_from_eventor(path):
     app.log.debug('Fetching events from eventor: ' + path)
     response = requests.request('GET', build_eventor_api_url(path),
                                 headers=eventor_headers)
-    # app.log.debug('Got response: ' + response.text)
     response.raise_for_status()
     return response.text
 
 
 def int_list_to_comma_sep_string(int_list):
     return ','.join(map(str, int_list))
+
+
+def get_datetime_iso(datetime_string):
+    default_date = datetime.datetime.combine(datetime.datetime.now(), datetime.time(0, tzinfo=tz.gettz(TIME_ZONE_NAME)))
+    dt = parser.parse(datetime_string, default=default_date)
+    return dt.isoformat()
 
 
 def get_events_from_eventor(organisation_ids):
@@ -95,19 +114,19 @@ def get_events_from_eventor(organisation_ids):
         except:
             app.log.debug('EventCenterPosition is unavailable for event  ' + event_id)
 
-        start_time = event.StartDate.Date.cdata + 'T' + event.StartDate.Clock.cdata
-        end_time = event.FinishDate.Date.cdata + 'T' + event.FinishDate.Clock.cdata
+        start_time = get_datetime_iso(event.StartDate.Date.cdata + ' ' + event.StartDate.Clock.cdata)
+        end_time = get_datetime_iso(event.FinishDate.Date.cdata + ' ' + event.FinishDate.Clock.cdata)
         calendar_event = {
             'summary': event.Name.cdata,
             'location': location,
             'description': 'Se flere detaljer i Eventor: ' + link,
             'start': {
                 'dateTime': start_time,
-                'timeZone': 'Europe/Paris',
+                'timeZone': TIME_ZONE_NAME,
             },
             'end': {
                 'dateTime': end_time,
-                'timeZone': 'Europe/Paris',
+                'timeZone': TIME_ZONE_NAME,
             },
             'reminders': {
                 'useDefault': False,
@@ -122,6 +141,11 @@ def get_events_from_eventor(organisation_ids):
             'transparency': 'transparent',
             'visibility': 'public'
         }
+
+        # Remove location-field if it is empty, in order to facilitate comparing these events to those retrieved from
+        # google calendar later
+        if location == '':
+            del calendar_event['location']
         calendar_events.append(calendar_event)
     app.log.debug('Found ' + str(len(calendar_events)) + ' events in Eventor for these org ids: '
                   + organisation_ids_comma_sep)
@@ -134,8 +158,8 @@ def get_code_from_request():
     return code
 
 
-# Automatically runs every day
-@app.schedule(Rate(60 * 24, unit=Rate.MINUTES))
+# Automatically runs twice every day
+@app.schedule(Rate(60 * 12, unit=Rate.MINUTES))
 def periodic_task(event):
     return sync_eventor_with_google_calendar()
 
@@ -156,11 +180,8 @@ def sync_eventor_with_google_calendar():
     calendar_client = googleapiclient.discovery.build(
         API_SERVICE_NAME, API_VERSION, credentials=credentials)
 
-    config_json_string = get_from_s3_safe(BUCKET, 'calendar-config', False)
-    config = json.loads(config_json_string)
-
     processed_events = 0
-    for calendar_config in config['calendar_config']:
+    for calendar_config in CONFIG['calendar_config']:
         events = add_to_one_calendar(calendar_client, calendar_config['calendar_id'], calendar_config['organisation_ids'])
         processed_events += len(events)
 
@@ -179,13 +200,25 @@ def add_to_one_calendar(calendar_client, calendar_id, organisation_ids):
     existing_events = find_events(calendar_client, calendar_id)
     eventor_calendar_events = get_events_from_eventor(organisation_ids)
     for eventor_calendar_event in eventor_calendar_events:
-        if event_already_exists(eventor_calendar_event, existing_events):
-            # TODO check if event has changed - if it has, update it - either delete and insert or patch
-            app.log.debug('TODO check if event has changed.')
-        else:
+        matching_calendar_event = event_already_exists(eventor_calendar_event, existing_events)
+        if not matching_calendar_event:
             insert_event(calendar_client, eventor_calendar_event, calendar_id)
+        else:
+            if events_the_same(eventor_calendar_event, matching_calendar_event):
+                app.log.debug('No changes to event - skip it.')
+            else:
+                patch_calendar_event(calendar_client, eventor_calendar_event, calendar_id, matching_calendar_event['id'])
 
     return eventor_calendar_events
+
+
+def patch_calendar_event(calendar_client, updated_event, calendar_id, event_id):
+    patched_event = calendar_client.events().patch(calendarId=calendar_id, eventId=event_id, body=updated_event).execute()
+    app.log.info('Event patched: %s' % (patched_event.get('htmlLink')))
+
+
+def events_the_same(eventor_calendar_event, matching_calendar_event):
+    return eventor_calendar_event.items() <= matching_calendar_event.items()
 
 
 def event_already_exists(event, existing_events):
@@ -194,7 +227,9 @@ def event_already_exists(event, existing_events):
         this_existing_source = existing_event.get('source', {'title': None})
         if this_event_id == this_existing_source.get('title'):
             app.log.debug('this event already exists - dont add it again: ' + this_event_id)
-            return True
+            app.log.debug('Eventor event: ' + json.dumps(event))
+            app.log.debug('Calendar event: ' + json.dumps(existing_event))
+            return existing_event
     return False
 
 
@@ -299,23 +334,6 @@ def make_redirect_response(location):
         status_code=307,
         body='',
         headers={'Location': location, 'Content-Type': 'text/plain'})
-
-
-def add_to_s3(bucket, key, body):
-    app.log.debug('adding to s3 bucket: ' + bucket + ', key: ' + key)
-    S3.put_object(Bucket=bucket, Key=key, Body=body)
-
-
-def get_from_s3(bucket, key):
-    response = S3.get_object(Bucket=bucket, Key=key)
-    return response['Body'].read()
-
-
-def get_from_s3_safe(bucket, key, default):
-    try:
-        return get_from_s3(bucket, key)
-    except ClientError as e:
-        return default
 
 
 def credentials_to_dict(credentials):

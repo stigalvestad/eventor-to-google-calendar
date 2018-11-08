@@ -10,5 +10,7 @@
       "organisation_ids": [2, 3],
       "calendar_id": "google calendar id"
     }
-  ]
+  ],
+  "EventorApiKey": "Add Eventor API key here",
+  "HostAddress": "https://write.it.here.com"
 }
