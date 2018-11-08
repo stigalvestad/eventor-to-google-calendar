@@ -1,0 +1,14 @@
+{
+  "calendar_config": [
+    {
+      "description": "Name of org",
+      "organisation_ids": [1],
+      "calendar_id": "google calendar id"
+    },
+    {
+      "description": "Name of org",
+      "organisation_ids": [2, 3],
+      "calendar_id": "google calendar id"
+    }
+  ]
+}

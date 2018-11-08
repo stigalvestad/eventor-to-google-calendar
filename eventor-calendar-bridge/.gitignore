@@ -1,0 +1,8 @@
+.chalice/deployments/
+.chalice/venv/
+.chalice/deployed/
+__pycache__/
+eventor_calendar_config.json
+for_test.py
+client_secrets.json
+orgs.csv
