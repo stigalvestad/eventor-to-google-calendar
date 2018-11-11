@@ -67,7 +67,7 @@ def init():
     app.log.info('Managed to read configuration OK')
     if not EVENTOR_ORGS or len(EVENTOR_ORGS) < 10:
         app.log.info('Count of eventor organisations is suspiciously low: ' + str(len(EVENTOR_ORGS)) + ', download it')
-        update_internal_eventor_orgs_list()
+        update_eventor_orgs_list()
     app.log.info('Count of eventor organisations: ' + str(len(EVENTOR_ORGS)))
     app.log.info('Initialization complete, waiting for something to do ...')
 
@@ -104,14 +104,14 @@ def get_events_from_eventor(organisation_ids):
     event_list = untangle.parse(xml_text)
     calendar_events = []
     for event in event_list.EventList.Event:
-        app.log.debug('---------------')
-        app.log.debug('All Event: ' + str(event))
-        app.log.debug('Event: ' + event.Name.cdata)
-        app.log.debug('Event-id: ' + event.EventId.cdata)
-        app.log.debug('Start dato: ' + event.StartDate.Date.cdata)
-        app.log.debug('Start klokke: ' + event.StartDate.Clock.cdata)
-        app.log.debug('Stopp dato: ' + event.FinishDate.Date.cdata)
-        app.log.debug('Stopp klokke: ' + event.FinishDate.Clock.cdata)
+        # app.log.debug('---------------')
+        # app.log.debug('All Event: ' + str(event))
+        app.log.debug('Processing event with event-id: ' + event.EventId.cdata)
+        # app.log.debug('Event: ' + event.Name.cdata)
+        # app.log.debug('Start dato: ' + event.StartDate.Date.cdata)
+        # app.log.debug('Start klokke: ' + event.StartDate.Clock.cdata)
+        # app.log.debug('Stopp dato: ' + event.FinishDate.Date.cdata)
+        # app.log.debug('Stopp klokke: ' + event.FinishDate.Clock.cdata)
         event_id = event.EventId.cdata
         link = 'http://eventor.orientering.no/Events/Show/' + event_id
         location = ''
@@ -122,7 +122,7 @@ def get_events_from_eventor(organisation_ids):
 
         org_name_list = []
         for organiserId in event.Organiser.OrganisationId:
-            app.log.debug('organiser: ' + str(organiserId.cdata))
+            # app.log.debug('organiser: ' + str(organiserId.cdata))
             org_name_list.append(EVENTOR_ORGS.get(organiserId.cdata, '?'))
 
         start_time = get_datetime_iso(event.StartDate.Date.cdata + ' ' + event.StartDate.Clock.cdata)
@@ -140,12 +140,13 @@ def get_events_from_eventor(organisation_ids):
                 'dateTime': end_time,
                 'timeZone': TIME_ZONE_NAME,
             },
-            'reminders': {
-                'useDefault': False,
-                'overrides': [
-                    {'method': 'popup', 'minutes': 24 * 60}
-                ],
-            },
+            # Remove reminders for now
+            # 'reminders': {
+            #     'useDefault': False,
+            #     'overrides': [
+            #         {'method': 'popup', 'minutes': 24 * 60}
+            #     ],
+            # },
             'source': {
                 'title': event_id,
                 'url': link
