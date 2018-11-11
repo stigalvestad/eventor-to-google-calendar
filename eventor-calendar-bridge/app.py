@@ -50,18 +50,26 @@ SCOPES = ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.goog
 API_SERVICE_NAME = 'calendar'
 API_VERSION = 'v3'
 
-CONFIG = json.loads(get_from_s3_safe(BUCKET, 'calendar-config', False))
+CONFIG = json.loads(get_from_s3_safe(BUCKET, 'calendar-config', '{}'))
+EVENTOR_ORGS = json.loads(get_from_s3_safe(BUCKET, 'eventor-orgs', '{}'))
 
 EVENTOR_BASE_URL = 'https://eventor.orientering.no/api'
 
-eventor_headers = {
+EVENTOR_HEADERS = {
     'ApiKey': (CONFIG['EventorApiKey'])
 }
 
 BASE_URL = CONFIG['HostAddress'] + '/api'
 TIME_ZONE_NAME = 'Europe/Paris'
 
-app.log.info('Managed to read configuration OK')
+
+def init():
+    app.log.info('Managed to read configuration OK')
+    if not EVENTOR_ORGS or len(EVENTOR_ORGS) < 10:
+        app.log.info('Count of eventor organisations is suspiciously low: ' + str(len(EVENTOR_ORGS)) + ', download it')
+        update_internal_eventor_orgs_list()
+    app.log.info('Count of eventor organisations: ' + str(len(EVENTOR_ORGS)))
+    app.log.info('Initialization complete, waiting for something to do ...')
 
 
 def build_eventor_api_url(relative_path):
@@ -71,7 +79,7 @@ def build_eventor_api_url(relative_path):
 def get_from_eventor(path):
     app.log.debug('Fetching events from eventor: ' + path)
     response = requests.request('GET', build_eventor_api_url(path),
-                                headers=eventor_headers)
+                                headers=EVENTOR_HEADERS)
     response.raise_for_status()
     return response.text
 
@@ -96,16 +104,14 @@ def get_events_from_eventor(organisation_ids):
     event_list = untangle.parse(xml_text)
     calendar_events = []
     for event in event_list.EventList.Event:
-        # app.log.debug('---------------')
-        # app.log.debug('Event: ' + event.Name.cdata)
-        # app.log.debug('Event-id: ' + event.EventId.cdata)
-        # app.log.debug('Start dato: ' + event.StartDate.Date.cdata)
-        # app.log.debug('Start klokke: ' + event.StartDate.Clock.cdata)
-        # app.log.debug('Stopp dato: ' + event.FinishDate.Date.cdata)
-        # app.log.debug('Stopp klokke: ' + event.FinishDate.Clock.cdata)
-        # app.log.debug('EventCenterPosition-x: ' + event.EventRace.get('EventCenterPosition', {'x': 8}))
-        # app.log.debug('EventCenterPosition-y: ' + event.EventRace.EventCenterPosition['y'])
-        # app.log.debug('EventCenterPosition-unit: ' + event.EventRace.EventCenterPosition['unit'])
+        app.log.debug('---------------')
+        app.log.debug('All Event: ' + str(event))
+        app.log.debug('Event: ' + event.Name.cdata)
+        app.log.debug('Event-id: ' + event.EventId.cdata)
+        app.log.debug('Start dato: ' + event.StartDate.Date.cdata)
+        app.log.debug('Start klokke: ' + event.StartDate.Clock.cdata)
+        app.log.debug('Stopp dato: ' + event.FinishDate.Date.cdata)
+        app.log.debug('Stopp klokke: ' + event.FinishDate.Clock.cdata)
         event_id = event.EventId.cdata
         link = 'http://eventor.orientering.no/Events/Show/' + event_id
         location = ''
@@ -114,10 +120,16 @@ def get_events_from_eventor(organisation_ids):
         except:
             app.log.debug('EventCenterPosition is unavailable for event  ' + event_id)
 
+        org_name_list = []
+        for organiserId in event.Organiser.OrganisationId:
+            app.log.debug('organiser: ' + str(organiserId.cdata))
+            org_name_list.append(EVENTOR_ORGS.get(organiserId.cdata, '?'))
+
         start_time = get_datetime_iso(event.StartDate.Date.cdata + ' ' + event.StartDate.Clock.cdata)
         end_time = get_datetime_iso(event.FinishDate.Date.cdata + ' ' + event.FinishDate.Clock.cdata)
+        organisers_name = str.join(', ', org_name_list)
         calendar_event = {
-            'summary': event.Name.cdata,
+            'summary': event.Name.cdata + ' (' + organisers_name + ')',
             'location': location,
             'description': 'Se flere detaljer i Eventor: ' + link,
             'start': {
@@ -191,7 +203,28 @@ def sync_eventor_with_google_calendar():
 
     app.log.debug('Events synched successfully')
 
-    return json.loads(json.dumps({'events_processed': processed_events, 'status': 'OK'}))
+    return json.loads(json.dumps({'events_processed': processed_events}))
+
+
+@app.schedule(Rate(60 * 24 * 7, unit=Rate.MINUTES))
+def update_eventor_orgs_list():
+    xml_text = get_from_eventor('/organisations')
+    orgs_doc = untangle.parse(xml_text)
+
+    orgs = orgs_doc.OrganisationList.Organisation
+    orgs_json_str = '{\n'
+    for org in orgs:
+        orgs_json_str += '\t"' + org.OrganisationId.cdata + '": "' + org.Name.cdata + '",\n'
+
+    # need to remove the trailing comma and \n after the final organisation
+    orgs_json_str = orgs_json_str[:-2]
+
+    orgs_json_str +='}'
+    orgs_json = json.loads(orgs_json_str)
+
+    add_to_s3(BUCKET, 'eventor-orgs', json.dumps(orgs_json))
+
+    return json.loads(json.dumps({'organisations_found': len(orgs)}))
 
 
 def add_to_one_calendar(calendar_client, calendar_id, organisation_ids):
@@ -343,3 +376,6 @@ def credentials_to_dict(credentials):
             'client_id': credentials.client_id,
             'client_secret': credentials.client_secret,
             'scopes': credentials.scopes}
+
+
+init()
