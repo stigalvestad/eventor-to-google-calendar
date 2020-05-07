@@ -260,19 +260,15 @@ def events_the_same(eventor_calendar_event, matching_calendar_event):
 
 
 def event_already_exists(event, existing_events):
+    this_event_id = event['source']['title']
     for existing_event in existing_events:
-        this_event_id = event['source']['title']
         this_existing_source = existing_event.get('source', {'title': None})
-        app.log.debug('---------------')
-        app.log.debug('Eventor event: ' + json.dumps(event))
-        app.log.debug('Calendar event: ' + json.dumps(existing_event))
-        app.log.debug('already exists? this_event_id=' + this_event_id)
-        app.log.debug('already exists? this_existing_source=' + this_existing_source)
-        app.log.debug('already exists? this_existing_source.get("title")=' + this_existing_source.get('title'))
         if this_event_id == this_existing_source.get('title'):
             app.log.debug('this event already exists - dont add it again: ' + this_event_id)
-
-            return existing_event
+        app.log.debug('Eventor event: ' + json.dumps(event))
+        app.log.debug('Calendar event: ' + json.dumps(existing_event))
+        return existing_event
+    app.log.debug('this event is new - add it: ' + this_event_id)
     return False
 
 
@@ -281,7 +277,7 @@ def format_utc(a_date):
 
 
 def get_future_date(from_date):
-    return from_date + datetime.timedelta(weeks=+2)
+    return from_date + datetime.timedelta(weeks=+40)
 
 
 def find_events(calendar_client, calendar_id):
