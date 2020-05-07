@@ -103,63 +103,67 @@ def get_events_from_eventor(organisation_ids):
                                 + '&organisationIds=' + organisation_ids_comma_sep)
     event_list = untangle.parse(xml_text)
     calendar_events = []
-    for event in event_list.EventList.Event:
-        # app.log.debug('---------------')
-        # app.log.debug('All Event: ' + str(event))
-        app.log.debug('Processing event with event-id: ' + event.EventId.cdata)
-        # app.log.debug('Event: ' + event.Name.cdata)
-        # app.log.debug('Start dato: ' + event.StartDate.Date.cdata)
-        # app.log.debug('Start klokke: ' + event.StartDate.Clock.cdata)
-        # app.log.debug('Stopp dato: ' + event.FinishDate.Date.cdata)
-        # app.log.debug('Stopp klokke: ' + event.FinishDate.Clock.cdata)
-        event_id = event.EventId.cdata
-        link = 'http://eventor.orientering.no/Events/Show/' + event_id
-        location = ''
-        try:
-            location = event.EventRace.EventCenterPosition['y'] + ', ' + event.EventRace.EventCenterPosition['x']
-        except:
-            app.log.debug('EventCenterPosition is unavailable for event  ' + event_id)
+    try:
+        for event in event_list.EventList.Event:
+            # app.log.debug('---------------')
+            # app.log.debug('All Event: ' + str(event))
+            app.log.debug('Processing event with event-id: ' + event.EventId.cdata)
+            # app.log.debug('Event: ' + event.Name.cdata)
+            # app.log.debug('Start dato: ' + event.StartDate.Date.cdata)
+            # app.log.debug('Start klokke: ' + event.StartDate.Clock.cdata)
+            # app.log.debug('Stopp dato: ' + event.FinishDate.Date.cdata)
+            # app.log.debug('Stopp klokke: ' + event.FinishDate.Clock.cdata)
+            event_id = event.EventId.cdata
+            link = 'http://eventor.orientering.no/Events/Show/' + event_id
+            location = ''
+            try:
+                location = event.EventRace.EventCenterPosition['y'] + ', ' + event.EventRace.EventCenterPosition['x']
+            except:
+                app.log.debug('EventCenterPosition is unavailable for event  ' + event_id)
 
-        org_name_list = []
-        for organiserId in event.Organiser.OrganisationId:
-            # app.log.debug('organiser: ' + str(organiserId.cdata))
-            org_name_list.append(EVENTOR_ORGS.get(organiserId.cdata, '?'))
+            org_name_list = []
+            for organiserId in event.Organiser.OrganisationId:
+                # app.log.debug('organiser: ' + str(organiserId.cdata))
+                org_name_list.append(EVENTOR_ORGS.get(organiserId.cdata, '?'))
 
-        start_time = get_datetime_iso(event.StartDate.Date.cdata + ' ' + event.StartDate.Clock.cdata)
-        end_time = get_datetime_iso(event.FinishDate.Date.cdata + ' ' + event.FinishDate.Clock.cdata)
-        organisers_name = str.join(', ', org_name_list)
-        calendar_event = {
-            'summary': event.Name.cdata + ' (' + organisers_name + ')',
-            'location': location,
-            'description': 'Se flere detaljer i Eventor: ' + link,
-            'start': {
-                'dateTime': start_time,
-                'timeZone': TIME_ZONE_NAME,
-            },
-            'end': {
-                'dateTime': end_time,
-                'timeZone': TIME_ZONE_NAME,
-            },
-            # Remove reminders for now
-            # 'reminders': {
-            #     'useDefault': False,
-            #     'overrides': [
-            #         {'method': 'popup', 'minutes': 24 * 60}
-            #     ],
-            # },
-            'source': {
-                'title': event_id,
-                'url': link
-            },
-            'transparency': 'transparent',
-            'visibility': 'public'
-        }
+            start_time = get_datetime_iso(event.StartDate.Date.cdata + ' ' + event.StartDate.Clock.cdata)
+            end_time = get_datetime_iso(event.FinishDate.Date.cdata + ' ' + event.FinishDate.Clock.cdata)
+            organisers_name = str.join(', ', org_name_list)
+            calendar_event = {
+                'summary': event.Name.cdata + ' (' + organisers_name + ')',
+                'location': location,
+                'description': 'Se flere detaljer i Eventor: ' + link,
+                'start': {
+                    'dateTime': start_time,
+                    'timeZone': TIME_ZONE_NAME,
+                },
+                'end': {
+                    'dateTime': end_time,
+                    'timeZone': TIME_ZONE_NAME,
+                },
+                # Remove reminders for now
+                # 'reminders': {
+                #     'useDefault': False,
+                #     'overrides': [
+                #         {'method': 'popup', 'minutes': 24 * 60}
+                #     ],
+                # },
+                'source': {
+                    'title': event_id,
+                    'url': link
+                },
+                'transparency': 'transparent',
+                'visibility': 'public'
+            }
 
-        # Remove location-field if it is empty, in order to facilitate comparing these events to those retrieved from
-        # google calendar later
-        if location == '':
-            del calendar_event['location']
-        calendar_events.append(calendar_event)
+            # Remove location-field if it is empty, in order to facilitate comparing these events to those retrieved from
+            # google calendar later
+            if location == '':
+                del calendar_event['location']
+            calendar_events.append(calendar_event)
+    except:
+        app.log.warn('Could not parse events for org ids: ' + organisation_ids_comma_sep)
+        app.log.warn('Could not parse events for org ids, xml response from eventor: ' + xml_text)
     app.log.debug('Found ' + str(len(calendar_events)) + ' events in Eventor for these org ids: '
                   + organisation_ids_comma_sep)
     return calendar_events
